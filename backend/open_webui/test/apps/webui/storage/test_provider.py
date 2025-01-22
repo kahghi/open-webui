@@ -32,6 +32,12 @@ def test_get_storage_provider():
     assert isinstance(Storage, provider.S3StorageProvider)
     Storage = provider.get_storage_provider("gcs")
     assert isinstance(Storage, provider.GCSStorageProvider)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"] = "test-json"
+    Storage = provider.get_storage_provider("gcs")
+    assert isinstance(Storage, provider.GCSStorageProvider)
+    with pytest.raises(TypeError):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"] = 123
+        provider.get_storage_provider("gcs")
     with pytest.raises(RuntimeError):
         provider.get_storage_provider("invalid")
 
