@@ -52,6 +52,7 @@ from open_webui.socket.main import (
     app as socket_app,
     periodic_usage_pool_cleanup,
 )
+from open_webui.utils.misc import parse_duration
 from open_webui.routers import (
     audio,
     images,
@@ -326,6 +327,8 @@ from open_webui.env import (
     BYPASS_MODEL_ACCESS_CONTROL,
     RESET_CONFIG_ON_START,
     OFFLINE_MODE,
+    WEBUI_AUTH_COOKIE_SAME_SITE,
+    WEBUI_AUTH_COOKIE_SECURE
 )
 
 
@@ -345,6 +348,7 @@ from open_webui.utils.access_control import has_access
 from open_webui.utils.auth import (
     get_license_data,
     decode_token,
+    get_valid_token,
     get_admin_user,
     get_verified_user,
 )
@@ -794,12 +798,6 @@ app.state.MODELS = {}
 
 class RedirectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # token = request.cookies.get("token")
-        # check if expiring
-        # if expiring, create new
-        # else return token
-        # response = await call_next(request)
-        # return response
         # Check if the request is a GET request
         if request.method == "GET":
             path = request.url.path
@@ -816,9 +814,30 @@ class RedirectMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
+class ValidateTokenMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        token = request.cookies.get("token")
+        if token:
+            valid_token = get_valid_token(
+                token,
+                expires_delta = parse_duration(app.state.config.JWT_EXPIRES_IN)
+            )
+            response = await call_next(request)
+            if valid_token:
+                response.set_cookie(
+                    key="token",
+                    value=valid_token,
+                    httponly=True,  # Ensures the cookie is not accessible via JavaScript
+                    samesite=WEBUI_AUTH_COOKIE_SAME_SITE,
+                    secure=WEBUI_AUTH_COOKIE_SECURE,
+                )
+                return response
+            if not valid_token:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Token")
+        return await call_next(request)
 
 # Add the middleware to the app
-# app.add_middleware(VerifyTokenMiddleware)
+app.add_middleware(ValidateTokenMiddleware)
 app.add_middleware(RedirectMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 

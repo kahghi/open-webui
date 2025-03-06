@@ -9,7 +9,7 @@ import os
 
 from datetime import UTC, datetime, timedelta
 from typing import Optional, Union, List, Dict
-
+from jwt.exceptions import ExpiredSignatureError
 from open_webui.models.users import Users
 from open_webui.utils.misc import parse_duration
 from open_webui.constants import ERROR_MESSAGES
@@ -123,20 +123,24 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> st
     return encoded_jwt
 
 
-def decode_token(token: str, expires_delta: Union[timedelta, None] = None) -> Optional[dict]:
+def get_valid_token(token: str, expires_delta: Union[timedelta, None] = None) -> str:
+    decoded = decode_token(token)
+    expiry_timestamp = decoded.get("exp")
+    if expiry_timestamp:
+        expiry_time = datetime.fromtimestamp(expiry_timestamp)
+        # buffer of 1 minute
+        if expiry_time - datetime.now()  >= parse_duration("1m"):
+            return token
+        return create_token(decoded, expires_delta)
+    return token
+
+
+def decode_token(token: str) -> Optional[dict]:
     try:
         decoded = jwt.decode(token, SESSION_SECRET, algorithms=[ALGORITHM])
-        expiry_timestamp = decoded.get("exp")
-        print(" TIMESTAMP: ", expiry_timestamp)
-        if expiry_timestamp:
-            expiry_time = datetime.fromtimestamp(expiry_timestamp)
-            if expiry_time - datetime.now()  >= parse_duration("10s"):
-                print("     TOKEN STILL VALID")
-                return decoded
-            print("     CREATING NEW TOKEN")
-            new_token = create_token(decoded, expires_delta)
-            return jwt.decode(new_token, SESSION_SECRET, algorithms=[ALGORITHM])
         return decoded
+    except ExpiredSignatureError as error:
+        raise error
     except Exception:
         return None
 
@@ -198,9 +202,7 @@ def get_current_user(
 
     # auth by jwt token
     try:
-        # data = decode_token(token)
-        data = decode_token(token, expires_delta = parse_duration(request.app.state.config.JWT_EXPIRES_IN))
-        print(" DATA: ", data)
+        data = decode_token(token)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -242,7 +244,6 @@ def get_current_user_by_api_key(api_key: str):
 
 
 def get_verified_user(user=Depends(get_current_user)):
-    print(" CURRENT USER: ", user)
     if user.role not in {"user", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
